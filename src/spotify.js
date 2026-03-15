@@ -1,4 +1,5 @@
 const API = "https://api.spotify.com/v1";
+const SERVER = "http://127.0.0.1:3001";
 
 export async function fetchUserProfile(token) {
   const res = await fetch(`${API}/me`, {
@@ -29,7 +30,6 @@ export async function fetchSavedTracks(token, onProgress, limit = 500) {
         album: item.track.album.name,
         albumArt: item.track.album.images?.[1]?.url || item.track.album.images?.[0]?.url,
         albumArtSmall: item.track.album.images?.[2]?.url || item.track.album.images?.[0]?.url,
-        previewUrl: item.track.preview_url,
         uri: item.track.uri,
         duration: item.track.duration_ms,
         popularity: item.track.popularity,
@@ -44,116 +44,142 @@ export async function fetchSavedTracks(token, onProgress, limit = 500) {
   return tracks;
 }
 
-export async function fetchAudioFeatures(token, trackIds, onProgress) {
-  const features = {};
-  const batchSize = 100;
+// ═══════════════════════════════════════════════════════
+// AI CLASSIFICATION (via server → Claude)
+// ═══════════════════════════════════════════════════════
 
-  for (let i = 0; i < trackIds.length; i += batchSize) {
-    const batch = trackIds.slice(i, i + batchSize);
-    const res = await fetch(`${API}/audio-features?ids=${batch.join(",")}`, {
-      headers: { Authorization: `Bearer ${token}` },
-    });
+export async function aiClassifyTracks(tracks, onProgress) {
+  onProgress?.("Sending to Claude for classification...");
 
-    if (!res.ok) {
-      console.warn("Audio features unavailable:", res.status);
-      return null;
-    }
+  const res = await fetch(`${SERVER}/ai/classify`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      tracks: tracks.map(t => ({ id: t.id, name: t.name, artist: t.artist })),
+    }),
+  });
 
-    const data = await res.json();
-    if (data.audio_features) {
-      for (const f of data.audio_features) {
-        if (f) features[f.id] = f;
-      }
-    }
-    onProgress?.(Object.keys(features).length, trackIds.length);
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || `AI classification failed: ${res.status}`);
   }
 
-  return features;
-}
+  const { classifications } = await res.json();
 
-export function classifyTrack(features) {
-  if (!features) return "valley";
-
-  const {
-    energy = 0.5,
-    tempo = 120,
-    valence = 0.5,
-    acousticness = 0.3,
-    instrumentalness = 0.1,
-    danceability = 0.5,
-    loudness = -10,
-  } = features;
-
-  const nt = Math.min(tempo / 200, 1);
-
-  const scores = {
-    night:
-      (energy < 0.15 ? 2.5 : energy < 0.25 ? 1.5 : 0) +
-      (instrumentalness > 0.6 ? 2 : instrumentalness > 0.3 ? 1 : 0) +
-      (1 - energy) * 1.2 +
-      (acousticness > 0.7 ? 0.8 : 0) +
-      (tempo < 80 ? 0.5 : 0),
-
-    valley:
-      (energy < 0.35 ? 1.5 : energy < 0.45 ? 0.5 : 0) +
-      (tempo < 100 ? 1.2 : tempo < 110 ? 0.5 : 0) +
-      (acousticness > 0.5 ? 1 : acousticness > 0.3 ? 0.5 : 0) +
-      (1 - energy) * 0.8 +
-      (1 - valence) * 0.6,
-
-    ground:
-      (energy > 0.2 && energy < 0.55 ? 1.2 : 0) +
-      (tempo > 70 && tempo < 115 ? 1 : 0) +
-      acousticness * 1.5 +
-      (1 - Math.abs(energy - 0.38)) * 0.8,
-
-    structure:
-      (energy > 0.25 && energy < 0.65 ? 1 : 0) +
-      instrumentalness * 1.5 +
-      (1 - Math.abs(nt - 0.5)) * 1 +
-      (1 - danceability) * 0.6,
-
-    growth:
-      (energy > 0.45 && energy < 0.8 ? 1.2 : 0) +
-      valence * 1.3 +
-      danceability * 1 +
-      (tempo > 100 && tempo < 140 ? 0.8 : 0),
-
-    peak:
-      (energy > 0.75 ? 2.5 : energy > 0.6 ? 1 : 0) +
-      (tempo > 120 ? 1.2 : tempo > 110 ? 0.5 : 0) +
-      valence * 0.8 +
-      danceability * 0.6 +
-      (loudness > -7 ? 0.8 : loudness > -10 ? 0.3 : 0),
-  };
-
-  return Object.entries(scores).sort((a, b) => b[1] - a[1])[0][0];
-}
-
-export function classifyAllTracks(tracks, audioFeatures) {
+  // Build playlists from classifications
   const playlists = { peak: [], structure: [], valley: [], growth: [], ground: [], night: [] };
-  const hasFeatures = audioFeatures !== null;
+  const classMap = {};
+  for (const c of classifications) {
+    classMap[c.id] = c.state;
+  }
 
   for (const track of tracks) {
-    const features = audioFeatures?.[track.id];
-    const state = features ? classifyTrack(features) : "valley";
-    playlists[state].push({ ...track, features, state });
+    const state = classMap[track.id] || "valley";
+    playlists[state].push({ ...track, state });
   }
 
-  return { playlists, hasFeatures, totalTracks: tracks.length };
+  return { playlists, totalTracks: tracks.length, aiClassified: true };
 }
 
-export function getFeatureLabel(features) {
-  if (!features) return "";
-  const parts = [];
-  if (features.energy > 0.7) parts.push("high energy");
-  else if (features.energy < 0.3) parts.push("low energy");
-  if (features.tempo > 130) parts.push(`${Math.round(features.tempo)} bpm`);
-  else if (features.tempo < 90) parts.push(`${Math.round(features.tempo)} bpm`);
-  if (features.acousticness > 0.6) parts.push("acoustic");
-  if (features.instrumentalness > 0.5) parts.push("instrumental");
-  if (features.valence > 0.7) parts.push("bright");
-  else if (features.valence < 0.3) parts.push("dark");
-  if (features.danceability > 0.7) parts.push("danceable");
-  return parts.join(" · ");
+// ═══════════════════════════════════════════════════════
+// AI RECOMMENDATIONS (via server → Claude)
+// ═══════════════════════════════════════════════════════
+
+export async function aiRecommend(state, element, tracks) {
+  const res = await fetch(`${SERVER}/ai/recommend`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      state,
+      element,
+      tracks: tracks.map(t => ({ name: t.name, artist: t.artist })),
+    }),
+  });
+
+  if (!res.ok) {
+    const err = await res.json().catch(() => ({}));
+    throw new Error(err.error || "Recommendations failed");
+  }
+
+  const { recommendations } = await res.json();
+  return recommendations;
+}
+
+// ═══════════════════════════════════════════════════════
+// SEARCH SPOTIFY (for finding recommended tracks)
+// ═══════════════════════════════════════════════════════
+
+export async function searchSpotifyTrack(token, artist, track) {
+  const res = await fetch(
+    `${SERVER}/spotify/search?token=${encodeURIComponent(token)}&q=${encodeURIComponent(`${track} ${artist}`)}`,
+  );
+  if (!res.ok) return null;
+  return res.json();
+}
+
+// ═══════════════════════════════════════════════════════
+// CREATE SPOTIFY PLAYLISTS
+// ═══════════════════════════════════════════════════════
+
+const STATE_META = {
+  peak:      { name: "水 Peak · Fire",      desc: "High energy, propulsive, bright — world-beater mode" },
+  structure: { name: "水 Structure · Metal", desc: "Precise, disciplined, mathematical — the Metal practice" },
+  valley:    { name: "水 Valley · Water",    desc: "Low energy, atmospheric, introspective — let the wave be low" },
+  growth:    { name: "水 Growth · Wood",     desc: "Creative, expansive, exploratory — vision mode" },
+  ground:    { name: "水 Ground · Earth",    desc: "Earthy, grounding, warm — reconnect with your body" },
+  night:     { name: "水 Night · Deep Water",desc: "Nocturnal, ambient, sparse — the deep well" },
+};
+
+export async function createPlaylist(token, userId, state, trackUris) {
+  const meta = STATE_META[state];
+
+  // Create playlist
+  const createRes = await fetch(`${API}/users/${userId}/playlists`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      name: meta.name,
+      description: meta.desc,
+      public: false,
+    }),
+  });
+
+  if (!createRes.ok) {
+    const err = await createRes.json().catch(() => ({}));
+    throw new Error(err.error?.message || `Failed to create playlist: ${createRes.status}`);
+  }
+
+  const playlist = await createRes.json();
+
+  // Add tracks in batches of 100
+  for (let i = 0; i < trackUris.length; i += 100) {
+    const batch = trackUris.slice(i, i + 100);
+    await fetch(`${API}/playlists/${playlist.id}/tracks`, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ uris: batch }),
+    });
+  }
+
+  return { id: playlist.id, url: playlist.external_urls.spotify, name: meta.name };
+}
+
+export async function createAllPlaylists(token, userId, playlists, onProgress) {
+  const results = {};
+  const states = Object.entries(playlists).filter(([, tracks]) => tracks.length > 0);
+
+  for (let i = 0; i < states.length; i++) {
+    const [state, tracks] = states[i];
+    onProgress?.(`Creating ${STATE_META[state].name}... (${i + 1}/${states.length})`);
+    const uris = tracks.map(t => t.uri);
+    results[state] = await createPlaylist(token, userId, state, uris);
+  }
+
+  return results;
 }

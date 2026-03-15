@@ -2,9 +2,10 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import {
   fetchUserProfile,
   fetchSavedTracks,
-  fetchAudioFeatures,
-  classifyAllTracks,
-  getFeatureLabel,
+  aiClassifyTracks,
+  aiRecommend,
+  createAllPlaylists,
+  searchSpotifyTrack,
 } from "./spotify";
 
 // ═══════════════════════════════════════════════════════
@@ -424,7 +425,7 @@ function WaveHistory({ history }) {
 // STATE VIEW
 // ═══════════════════════════════════════════════════════
 
-function StateView({ state, onReset, spotifyData, spotifyConnected, onOpenSpotify }) {
+function StateView({ state, onReset, spotifyData, spotifyConnected, onOpenSpotify, onCreatePlaylists, onDiscover, recommendations, loadingRecs, creatingPlaylists, playlistsCreated }) {
   const s = STATES[state];
   const [selectedCurated, setSelectedCurated] = useState(null);
   const [activeSection, setActiveSection] = useState("music");
@@ -480,9 +481,7 @@ function StateView({ state, onReset, spotifyData, spotifyConnected, onOpenSpotif
                 YOUR LIBRARY · {s.element.toUpperCase()} PLAYLIST · {statePlaylist.length} TRACKS
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 4, marginBottom: 24 }}>
-                {statePlaylist.map((track, i) => {
-                  const featureLabel = getFeatureLabel(track.features);
-                  return (
+                {statePlaylist.map((track, i) => (
                     <a
                       key={track.id}
                       href={track.uri}
@@ -516,17 +515,13 @@ function StateView({ state, onReset, spotifyData, spotifyConnected, onOpenSpotif
                           whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis",
                         }}>
                           {track.artist}
-                          {featureLabel && (
-                            <span style={{ color: "#4a4a50", marginLeft: 8 }}>· {featureLabel}</span>
-                          )}
                         </div>
                       </div>
                       <span style={{ color: "#1DB954", fontSize: 16, flexShrink: 0, opacity: 0.5 }}>
                         ▶
                       </span>
                     </a>
-                  );
-                })}
+                ))}
               </div>
             </>
           )}
@@ -576,6 +571,74 @@ function StateView({ state, onReset, spotifyData, spotifyConnected, onOpenSpotif
               <span style={{ fontSize: 13, color: "#1DB954" }}>
                 Connect Spotify to see your library sorted by element →
               </span>
+            </div>
+          )}
+
+          {/* Actions */}
+          {spotifyConnected && statePlaylist.length > 0 && (
+            <div style={{ display: "flex", gap: 8, marginTop: 16 }}>
+              {!playlistsCreated?.[state] && (
+                <button onClick={() => onCreatePlaylists(state)} disabled={creatingPlaylists} className="mono" style={{
+                  flex: 1, background: "rgba(29,185,84,0.08)",
+                  border: "1px solid rgba(29,185,84,0.2)", borderRadius: 3,
+                  padding: "10px 14px", color: "#1DB954", fontSize: 9, letterSpacing: 2,
+                  cursor: creatingPlaylists ? "wait" : "pointer", fontFamily: "'DM Mono', monospace",
+                }}>
+                  {creatingPlaylists ? "CREATING..." : "CREATE PLAYLIST ON SPOTIFY"}
+                </button>
+              )}
+              {playlistsCreated?.[state] && (
+                <a href={playlistsCreated[state].url} target="_blank" rel="noopener" className="mono" style={{
+                  flex: 1, background: "rgba(29,185,84,0.08)",
+                  border: "1px solid rgba(29,185,84,0.3)", borderRadius: 3,
+                  padding: "10px 14px", color: "#1DB954", fontSize: 9, letterSpacing: 2,
+                  textDecoration: "none", textAlign: "center", fontFamily: "'DM Mono', monospace",
+                }}>
+                  ✓ OPEN IN SPOTIFY
+                </a>
+              )}
+              <button onClick={() => onDiscover(state)} disabled={loadingRecs} className="mono" style={{
+                flex: 1, background: `${s.color}08`,
+                border: `1px solid ${s.color}25`, borderRadius: 3,
+                padding: "10px 14px", color: s.color, fontSize: 9, letterSpacing: 2,
+                cursor: loadingRecs ? "wait" : "pointer", fontFamily: "'DM Mono', monospace",
+              }}>
+                {loadingRecs ? "FINDING..." : "DISCOVER NEW"}
+              </button>
+            </div>
+          )}
+
+          {/* AI Recommendations */}
+          {recommendations?.[state]?.length > 0 && (
+            <div style={{ marginTop: 20 }}>
+              <div className="mono" style={{ fontSize: 9, letterSpacing: 3, color: s.color, marginBottom: 12 }}>
+                AI RECOMMENDATIONS · {s.element.toUpperCase()}
+              </div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+                {recommendations[state].map((rec, i) => (
+                  <div key={i} style={{
+                    padding: "12px 16px",
+                    border: `1px solid ${s.color}15`,
+                    background: `${s.color}04`, borderRadius: 3,
+                    animation: "fadeUp 0.4s ease both",
+                    animationDelay: `${i * 0.04}s`,
+                  }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline" }}>
+                      <div>
+                        <span style={{ fontSize: 14, color: "#c8c0b4" }}>{rec.artist}</span>
+                        <span style={{ fontSize: 13, color: "#6a6458", marginLeft: 8 }}>— {rec.track}</span>
+                      </div>
+                      {rec.spotifyUri && (
+                        <a href={rec.spotifyUri} style={{ color: "#1DB954", fontSize: 14, textDecoration: "none", opacity: 0.6 }}>▶</a>
+                      )}
+                    </div>
+                    {rec.album && (
+                      <div style={{ fontSize: 12, color: "#5a5650", fontStyle: "italic", marginTop: 2 }}>{rec.album}</div>
+                    )}
+                    <div style={{ fontSize: 12, color: "#7a7468", marginTop: 6, lineHeight: 1.5 }}>{rec.why}</div>
+                  </div>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -686,6 +749,12 @@ export default function MizuApp() {
   const audioRef = useRef(null);
   const progressRef = useRef(null);
 
+  // AI features
+  const [recommendations, setRecommendations] = useState({});
+  const [loadingRecs, setLoadingRecs] = useState(false);
+  const [creatingPlaylists, setCreatingPlaylists] = useState(false);
+  const [playlistsCreated, setPlaylistsCreated] = useState({});
+
   // Load from localStorage + parse OAuth token from URL hash
   useEffect(() => {
     setMounted(true);
@@ -711,13 +780,21 @@ export default function MizuApp() {
         return;
       }
 
-      // Restore cached Spotify data
+      // Restore cached Spotify data (only if AI-classified format)
       const savedData = localStorage.getItem("mizu_spotify_data");
       const savedUser = localStorage.getItem("mizu_spotify_user");
       if (savedData && savedUser) {
-        setSpotifyData(JSON.parse(savedData));
-        setSpotifyUser(JSON.parse(savedUser));
-        setSpotifyConnected(true);
+        const parsed = JSON.parse(savedData);
+        if (parsed.aiClassified) {
+          setSpotifyData(parsed);
+          setSpotifyUser(JSON.parse(savedUser));
+          setSpotifyConnected(true);
+        } else {
+          // Old format — clear it, user needs to reconnect
+          localStorage.removeItem("mizu_spotify_data");
+          localStorage.removeItem("mizu_spotify_user");
+          localStorage.removeItem("mizu_spotify_token");
+        }
       }
     } catch {}
   }, []);
@@ -752,16 +829,12 @@ export default function MizuApp() {
         setLoadPhase(`Fetching tracks... ${loaded}/${total}`);
       });
 
-      setLoadPhase("Analyzing audio features...");
-      const ids = tracks.map(t => t.id);
-      const features = await fetchAudioFeatures(token, ids, (done, total) => {
-        setLoadPhase(`Analyzing... ${done}/${total}`);
+      setLoadPhase("Claude is classifying your music...");
+      const data = await aiClassifyTracks(tracks, (phase) => {
+        setLoadPhase(phase);
       });
 
-      setLoadPhase("Sorting into elemental playlists...");
-      const data = classifyAllTracks(tracks, features);
-
-      const userData = { name: user.display_name, image: user.images?.[0]?.url };
+      const userData = { name: user.display_name, id: user.id, image: user.images?.[0]?.url };
       setSpotifyData(data);
       setSpotifyUser(userData);
       setSpotifyConnected(true);
@@ -794,6 +867,75 @@ export default function MizuApp() {
 
   const startOAuth = () => {
     window.location.href = "http://127.0.0.1:3001/auth/login?client_id=8bc5ee9cd01649feac6ec71a4854c148";
+  };
+
+  // ─── AI Features ───
+
+  const handleCreatePlaylist = async (state) => {
+    const token = localStorage.getItem("mizu_spotify_token");
+    if (!token || !spotifyUser?.id || !spotifyData?.playlists?.[state]) return;
+
+    setCreatingPlaylists(true);
+    try {
+      const results = await createAllPlaylists(
+        token,
+        spotifyUser.id,
+        { [state]: spotifyData.playlists[state] },
+        (phase) => setLoadPhase(phase),
+      );
+      setPlaylistsCreated(prev => ({ ...prev, ...results }));
+    } catch (err) {
+      console.error("Playlist creation failed:", err);
+    }
+    setCreatingPlaylists(false);
+    setLoadPhase(null);
+  };
+
+  const handleCreateAllPlaylists = async () => {
+    const token = localStorage.getItem("mizu_spotify_token");
+    if (!token || !spotifyUser?.id || !spotifyData?.playlists) return;
+
+    setCreatingPlaylists(true);
+    try {
+      const results = await createAllPlaylists(
+        token,
+        spotifyUser.id,
+        spotifyData.playlists,
+        (phase) => setLoadPhase(phase),
+      );
+      setPlaylistsCreated(results);
+    } catch (err) {
+      console.error("Playlist creation failed:", err);
+    }
+    setCreatingPlaylists(false);
+    setLoadPhase(null);
+  };
+
+  const handleDiscover = async (state) => {
+    if (!spotifyData?.playlists?.[state]) return;
+    const s = STATES[state];
+
+    setLoadingRecs(true);
+    try {
+      const recs = await aiRecommend(state, s.element, spotifyData.playlists[state]);
+
+      // Try to find each recommendation on Spotify
+      const token = localStorage.getItem("mizu_spotify_token");
+      if (token) {
+        for (const rec of recs) {
+          const found = await searchSpotifyTrack(token, rec.artist, rec.track);
+          if (found) {
+            rec.spotifyUri = found.uri;
+            rec.albumArt = found.albumArt;
+          }
+        }
+      }
+
+      setRecommendations(prev => ({ ...prev, [state]: recs }));
+    } catch (err) {
+      console.error("Recommendations failed:", err);
+    }
+    setLoadingRecs(false);
   };
 
   // ─── Playback (kept for tracks with previews) ───
@@ -996,10 +1138,25 @@ export default function MizuApp() {
                     </div>
                   )}
 
-                  <div className="mono" style={{ fontSize: 9, color: "#3a3a3a", marginBottom: 8 }}>
+                  <div className="mono" style={{ fontSize: 9, color: "#3a3a3a", marginBottom: 12 }}>
                     {spotifyData?.totalTracks || 0} tracks classified
-                    {spotifyData && !spotifyData.hasFeatures && " (without audio features)"}
+                    {spotifyData?.aiClassified && " by Claude"}
                   </div>
+
+                  {Object.keys(playlistsCreated).length === 0 ? (
+                    <button onClick={handleCreateAllPlaylists} disabled={creatingPlaylists} className="mono" style={{
+                      background: "rgba(29,185,84,0.08)", border: "1px solid rgba(29,185,84,0.2)",
+                      color: "#1DB954", padding: "8px 20px", borderRadius: 3, cursor: "pointer",
+                      fontSize: 9, letterSpacing: 2, fontFamily: "'DM Mono', monospace",
+                      marginBottom: 8,
+                    }}>
+                      {creatingPlaylists ? loadPhase || "CREATING..." : "CREATE ALL PLAYLISTS ON SPOTIFY"}
+                    </button>
+                  ) : (
+                    <div className="mono" style={{ fontSize: 9, color: "#1DB954", marginBottom: 8 }}>
+                      ✓ {Object.keys(playlistsCreated).length} PLAYLISTS CREATED
+                    </div>
+                  )}
 
                   <button onClick={disconnectSpotify} className="mono" style={{
                     background: "none", border: "none", color: "#4a4a50",
@@ -1068,6 +1225,12 @@ export default function MizuApp() {
               spotifyData={spotifyData}
               spotifyConnected={spotifyConnected}
               onOpenSpotify={() => setShowSpotifyModal(true)}
+              onCreatePlaylists={handleCreatePlaylist}
+              onDiscover={handleDiscover}
+              recommendations={recommendations}
+              loadingRecs={loadingRecs}
+              creatingPlaylists={creatingPlaylists}
+              playlistsCreated={playlistsCreated}
             />
             <WaveHistory history={history} />
           </>
