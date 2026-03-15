@@ -213,15 +213,8 @@ function CheckInScreen({ onComplete }) {
 // ═══════════════════════════════════════════════════════
 
 function SpotifyConnect({ onConnect, onOAuth, onClose, loading, phase, error }) {
-  const [mode, setMode] = useState("oauth"); // "oauth" or "token"
-  const [clientId, setClientId] = useState(localStorage.getItem("mizu_spotify_client_id") || "");
   const [token, setToken] = useState("");
-
-  const handleOAuth = () => {
-    if (!clientId.trim()) return;
-    localStorage.setItem("mizu_spotify_client_id", clientId.trim());
-    onOAuth(clientId.trim());
-  };
+  const [showManual, setShowManual] = useState(false);
 
   return (
     <div style={{
@@ -248,129 +241,76 @@ function SpotifyConnect({ onConnect, onOAuth, onClose, loading, phase, error }) 
           </div>
         ) : (
           <>
-            <div style={{ textAlign: "center", marginBottom: 20 }}>
+            <div style={{ textAlign: "center", marginBottom: 24 }}>
               <span style={{ fontSize: 28, color: "#1DB954" }}>♫</span>
               <div className="mono" style={{ fontSize: 10, letterSpacing: 3, color: "#1DB954", marginTop: 8 }}>
                 CONNECT SPOTIFY
               </div>
             </div>
 
-            {/* Mode toggle */}
-            <div style={{ display: "flex", justifyContent: "center", gap: 4, marginBottom: 20 }}>
-              {[["oauth", "AUTHORIZE"], ["token", "PASTE TOKEN"]].map(([m, label]) => (
-                <button key={m} className="mono" onClick={() => setMode(m)} style={{
-                  background: mode === m ? "rgba(29,185,84,0.1)" : "none",
-                  border: `1px solid ${mode === m ? "rgba(29,185,84,0.3)" : "transparent"}`,
-                  color: mode === m ? "#1DB954" : "#5a5650",
-                  padding: "6px 14px", borderRadius: 2, cursor: "pointer",
-                  fontSize: 9, letterSpacing: 2, fontFamily: "'DM Mono', monospace",
-                }}>
-                  {label}
-                </button>
-              ))}
-            </div>
+            <p style={{ fontSize: 14, color: "#8a8478", lineHeight: 1.8, marginBottom: 20, textAlign: "center" }}>
+              Sign in with your Spotify account to sort your library into elemental playlists.
+            </p>
 
-            {mode === "oauth" ? (
-              <>
-                <div style={{ fontSize: 13, color: "#8a8478", lineHeight: 1.8, marginBottom: 16 }}>
-                  <ol style={{ paddingLeft: 18 }}>
-                    <li style={{ marginBottom: 8 }}>
-                      Go to{" "}
-                      <a href="https://developer.spotify.com/dashboard" target="_blank" rel="noopener"
-                        style={{ color: "#c8c0b4", textDecoration: "underline" }}>
-                        developer.spotify.com/dashboard
-                      </a>
-                    </li>
-                    <li style={{ marginBottom: 8 }}>
-                      Create an app (name it anything, set redirect URI to{" "}
-                      <span style={{ color: "#1DB954", fontFamily: "'DM Mono', monospace", fontSize: 11 }}>
-                        {window.location.origin}/
-                      </span>)
-                    </li>
-                    <li style={{ marginBottom: 8 }}>Copy the <span style={{ color: "#c8c0b4" }}>Client ID</span> and paste below</li>
-                    <li>Click Authorize — Spotify will ask you to approve, then redirect you back</li>
-                  </ol>
-                </div>
-
-                <input
-                  type="text"
-                  value={clientId}
-                  onChange={e => setClientId(e.target.value)}
-                  placeholder="Your Spotify Client ID..."
-                  style={{
-                    width: "100%", background: "rgba(255,255,255,0.04)",
-                    border: "1px solid rgba(255,255,255,0.1)", borderRadius: 3,
-                    padding: "12px 16px", color: "#d4d0c4", fontSize: 13,
-                    fontFamily: "'DM Mono', monospace", outline: "none", marginBottom: 12,
-                  }}
-                  onFocus={e => { e.target.style.borderColor = "rgba(29,185,84,0.4)"; }}
-                  onBlur={e => { e.target.style.borderColor = "rgba(255,255,255,0.1)"; }}
-                  onKeyDown={e => { if (e.key === "Enter" && clientId.trim()) handleOAuth(); }}
-                />
-
-                {error && (
-                  <div style={{ fontSize: 12, color: "#c07060", marginBottom: 12 }}>{error}</div>
-                )}
-
-                <button
-                  onClick={handleOAuth}
-                  disabled={!clientId.trim()}
-                  style={{
-                    width: "100%", background: "rgba(29,185,84,0.15)",
-                    border: "1px solid rgba(29,185,84,0.3)", borderRadius: 3,
-                    padding: 12, color: "#1DB954", fontSize: 14, fontFamily: "inherit",
-                    cursor: clientId.trim() ? "pointer" : "default",
-                    transition: "all 0.3s", opacity: clientId.trim() ? 1 : 0.5,
-                  }}
-                >
-                  Authorize with Spotify
-                </button>
-              </>
-            ) : (
-              <>
-                <div style={{ fontSize: 13, color: "#8a8478", lineHeight: 1.8, marginBottom: 16 }}>
-                  If you already have a Spotify access token with{" "}
-                  <span style={{ color: "#1DB954" }}>user-library-read</span> scope, paste it below.
-                </div>
-
-                <input
-                  type="text"
-                  value={token}
-                  onChange={e => setToken(e.target.value)}
-                  placeholder="Paste access token..."
-                  style={{
-                    width: "100%", background: "rgba(255,255,255,0.04)",
-                    border: "1px solid rgba(255,255,255,0.1)", borderRadius: 3,
-                    padding: "12px 16px", color: "#d4d0c4", fontSize: 13,
-                    fontFamily: "'DM Mono', monospace", outline: "none", marginBottom: 12,
-                  }}
-                  onFocus={e => { e.target.style.borderColor = "rgba(29,185,84,0.4)"; }}
-                  onBlur={e => { e.target.style.borderColor = "rgba(255,255,255,0.1)"; }}
-                  onKeyDown={e => { if (e.key === "Enter" && token.trim()) onConnect(token.trim()); }}
-                />
-
-                {error && (
-                  <div style={{ fontSize: 12, color: "#c07060", marginBottom: 12 }}>{error}</div>
-                )}
-
-                <button
-                  onClick={() => token.trim() && onConnect(token.trim())}
-                  disabled={!token.trim()}
-                  style={{
-                    width: "100%", background: "rgba(29,185,84,0.15)",
-                    border: "1px solid rgba(29,185,84,0.3)", borderRadius: 3,
-                    padding: 12, color: "#1DB954", fontSize: 14, fontFamily: "inherit",
-                    cursor: token.trim() ? "pointer" : "default",
-                    transition: "all 0.3s", opacity: token.trim() ? 1 : 0.5,
-                  }}
-                >
-                  Connect
-                </button>
-              </>
+            {error && (
+              <div style={{ fontSize: 12, color: "#c07060", marginBottom: 12, textAlign: "center" }}>{error}</div>
             )}
 
-            <div className="mono" style={{ fontSize: 9, color: "#4a4a50", marginTop: 12, textAlign: "center" }}>
+            <button
+              onClick={onOAuth}
+              style={{
+                width: "100%", background: "rgba(29,185,84,0.15)",
+                border: "1px solid rgba(29,185,84,0.3)", borderRadius: 3,
+                padding: 14, color: "#1DB954", fontSize: 15, fontFamily: "inherit",
+                cursor: "pointer", transition: "all 0.3s",
+              }}
+            >
+              Authorize with Spotify
+            </button>
+
+            <div className="mono" style={{ fontSize: 9, color: "#4a4a50", marginTop: 16, textAlign: "center" }}>
               Token expires in ~1 hour · your data stays local
+            </div>
+
+            {/* Manual token fallback */}
+            <div style={{ marginTop: 16, borderTop: "1px solid rgba(255,255,255,0.04)", paddingTop: 12 }}>
+              <button className="mono" onClick={() => setShowManual(!showManual)} style={{
+                background: "none", border: "none", color: "#4a4a50",
+                fontSize: 9, letterSpacing: 2, cursor: "pointer",
+                fontFamily: "'DM Mono', monospace", width: "100%", textAlign: "center",
+              }}>
+                {showManual ? "HIDE" : "HAVE A TOKEN? PASTE IT"}
+              </button>
+              {showManual && (
+                <div style={{ marginTop: 10 }}>
+                  <input
+                    type="text"
+                    value={token}
+                    onChange={e => setToken(e.target.value)}
+                    placeholder="Paste access token..."
+                    style={{
+                      width: "100%", background: "rgba(255,255,255,0.04)",
+                      border: "1px solid rgba(255,255,255,0.1)", borderRadius: 3,
+                      padding: "10px 14px", color: "#d4d0c4", fontSize: 12,
+                      fontFamily: "'DM Mono', monospace", outline: "none", marginBottom: 8,
+                    }}
+                    onKeyDown={e => { if (e.key === "Enter" && token.trim()) onConnect(token.trim()); }}
+                  />
+                  <button
+                    onClick={() => token.trim() && onConnect(token.trim())}
+                    disabled={!token.trim()}
+                    style={{
+                      width: "100%", background: "rgba(255,255,255,0.04)",
+                      border: "1px solid rgba(255,255,255,0.08)", borderRadius: 3,
+                      padding: 10, color: "#8a8478", fontSize: 13, fontFamily: "inherit",
+                      cursor: token.trim() ? "pointer" : "default",
+                      opacity: token.trim() ? 1 : 0.5,
+                    }}
+                  >
+                    Connect with token
+                  </button>
+                </div>
+              )}
             </div>
           </>
         )}
@@ -753,24 +693,19 @@ export default function MizuApp() {
       const savedHistory = localStorage.getItem("mizu_history");
       if (savedHistory) setHistory(JSON.parse(savedHistory));
 
-      // Check for OAuth callback token in URL hash
-      const hash = window.location.hash;
-      if (hash.includes("access_token")) {
-        const params = new URLSearchParams(hash.substring(1));
-        const token = params.get("access_token");
-        if (token) {
-          // Clear the hash from URL
-          window.history.replaceState(null, "", window.location.pathname);
-          // Auto-connect with the token
-          connectSpotify(token);
-          return;
-        }
+      // Check for OAuth callback token in query params
+      const params = new URLSearchParams(window.location.search);
+      const oauthToken = params.get("spotify_token");
+      const oauthError = params.get("spotify_error");
+
+      if (oauthToken) {
+        window.history.replaceState(null, "", window.location.pathname);
+        connectSpotify(oauthToken);
+        return;
       }
 
-      // Check for OAuth error
-      if (hash.includes("error")) {
-        const params = new URLSearchParams(hash.substring(1));
-        setSpotifyError(params.get("error") || "Authorization failed");
+      if (oauthError) {
+        setSpotifyError(oauthError);
         setShowSpotifyModal(true);
         window.history.replaceState(null, "", window.location.pathname);
         return;
@@ -857,11 +792,8 @@ export default function MizuApp() {
     localStorage.removeItem("mizu_spotify_user");
   };
 
-  const startOAuth = (clientId) => {
-    const redirectUri = encodeURIComponent(window.location.origin + "/");
-    const scopes = encodeURIComponent("user-library-read user-read-private");
-    window.location.href =
-      `https://accounts.spotify.com/authorize?client_id=${clientId}&response_type=token&redirect_uri=${redirectUri}&scope=${scopes}&show_dialog=true`;
+  const startOAuth = () => {
+    window.location.href = "http://127.0.0.1:3001/auth/login?client_id=8bc5ee9cd01649feac6ec71a4854c148";
   };
 
   // ─── Playback (kept for tracks with previews) ───
